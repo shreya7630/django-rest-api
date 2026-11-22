@@ -53,3 +53,7 @@ class OrderCreateSerializer(serializers.Serializer):
         if len(product_ids) != len(set(product_ids)):
             raise serializers.ValidationError('Each Product can appear only once.')
         return items
+
+
+class OrderStatusSerializer(serializers.Serializer):
+    status = serializers.ChoiceField(choices=Order.Status.choices)

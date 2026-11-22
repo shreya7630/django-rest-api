@@ -4,16 +4,18 @@ from django.db.models import ProtectedError
 from rest_framework import filters, mixins, permissions, status, viewsets
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from rest_framework.decorators import action
 
 from .models import Category, Order, Product
 from .permissions import IsAdminOrReadOnly
 from .serializers import (
     CategorySerializer,
     OrderCreateSerializer,
-    OrderSerializer, 
+    OrderSerializer,
+    OrderStatusSerializer, 
     ProductSerializer,
 )
-from .services import place_order
+from .services import change_order_status, place_order
 
 def parse_int_param(params, name):
     value = params.get(name)
@@ -113,3 +115,24 @@ class OrderViewSet(
         serializer.is_valid(raise_exception=True)
         order = place_order(request.user, serializer.validated_data['items'])
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        order = self.get_object()
+        if order.status != 'pending' and not request.user.is_staff:
+            raise ValidationError({'status': 'Only pending orders can be cancelled.'})
+        order = change_order_status(order, 'cancelled')
+        return Response(OrderSerializer(order).data)
+
+    @action(
+        detail=True,
+        methods=['patch'],
+        url_path='status',
+        permission_classes=[permissions.IsAdminUser],
+    )
+    def update_status(self, request, pk=None):
+        order = self.get_object()
+        serializer = OrderStatusSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = change_order_status(order, serializer.validated_data['status'])
+        return Response(OrderSerializer(order).data)
