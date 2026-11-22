@@ -1,6 +1,8 @@
 from decimal import Decimal, InvalidOperation
+from django.db.models import ProtectedError
 
-from rest_framework import filters, viewsets
+from rest_framework import filters, status, viewsets
+from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
 from .models import Category, Product
@@ -28,13 +30,30 @@ def parse_decimal_param(params, name):
         raise ValidationError({name: 'Must be a number.'})
     return number
 
+class ProtectedDeleteMixin:
+    protected_message = 'This item is in use and cannot be deleted.'
 
-class CategoryViewSet(viewsets.ModelViewSet):
+    def destroy(self, request, *args, **kwargs):
+        try:
+            return super().destroy(request, *args, **kwargs)
+        except ProtectedError:
+            return Response(
+                {'detail': self.protected_message},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+
+class CategoryViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
+    protected_message = 'This category still has products. Move or delete them first.'
     queryset = Category.objects.all().order_by('name')
     serializer_class = CategorySerializer
     permission_classes = [IsAdminOrReadOnly]
 
 class ProductViewSet(viewsets.ModelViewSet):
+    protected_message = (
+        'This product is part of existing orders and cannot be deleted.'
+        'Set is_active to false instead.'
+    )
     serializer_class = ProductSerializer
     permission_classes = [IsAdminOrReadOnly]
     filter_backends = [filters.SearchFilter, filters.OrderingFilter]
