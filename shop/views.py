@@ -1,13 +1,19 @@
 from decimal import Decimal, InvalidOperation
-from django.db.models import ProtectedError
 
-from rest_framework import filters, status, viewsets
+from django.db.models import ProtectedError
+from rest_framework import filters, mixins, permissions, status, viewsets
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
 
-from .models import Category, Product
+from .models import Category, Order, Product
 from .permissions import IsAdminOrReadOnly
-from .serializers import CategorySerializer, ProductSerializer
+from .serializers import (
+    CategorySerializer,
+    OrderCreateSerializer,
+    OrderSerializer, 
+    ProductSerializer,
+)
+from .services import place_order
 
 def parse_int_param(params, name):
     value = params.get(name)
@@ -49,6 +55,7 @@ class CategoryViewSet(ProtectedDeleteMixin, viewsets.ModelViewSet):
     serializer_class = CategorySerializer
     permission_classes = [IsAdminOrReadOnly]
 
+
 class ProductViewSet(viewsets.ModelViewSet):
     protected_message = (
         'This product is part of existing orders and cannot be deleted.'
@@ -80,3 +87,29 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(stock_gt=0)
         
         return queryset
+
+
+class OrderViewSet(
+    mixins.CreateModelMixin,
+    mixins.ListModelMixin,
+    mixins.RetrieveModelMixin,
+    viewsets.GenericViewSet,
+):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        queryset = Order.objects.prefetch_related('items__product').order_by('-created_at')
+        if self.request.user.is_staff:
+            return queryset
+        return queryset.filter(user=self.request.user)
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return OrderCreateSerializer
+        return OrderSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        order = place_order(request.user, serializer.validated_data['items'])
+        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
