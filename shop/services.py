@@ -41,3 +41,43 @@ def place_order(user, items):
     order.total_amount = total
     order.save(update_fields=['total_amount'])
     return order
+
+
+ALLOWED_TRANSITIONS = {
+    'pending': {'confirmed', 'cancelled'},
+    'confirmed': {'shipped', 'cancelled'},
+    'shipped': set(),
+    'cancelled': set(),
+}
+
+
+def restore_stock(order):
+    items = list(order.items.all())
+    product_ids = [item.product_id for item in items]
+    products = Product.objects.select_for_update().filter(id__in=product_ids)
+    products_by_id = {product.id: product for product in products}
+
+    for item in items:
+        product = products_by_id[item.product_id]
+        product.stock += item.quantity
+        product.save(update_fields=['stock', 'updated_at'])
+
+
+@transaction.atomic
+def change_order_status(order, new_status):
+    """Move an order to a new status if the rules allow it.
+    Cancelling also returns the ordered quantities to stock.
+    """
+    order = Order.objects.select_for_update().get(pk=order.pk)
+
+    if new_status not in ALLOWED_TRANSITIONS[order.status]:
+        raise ValidationError({
+            'status': f'Cannot change an order from "{order.status}" to "{new_status}".'
+        })
+
+    if new_status == 'cancelled':
+        restore_stock(order)
+
+    order.status = new_status
+    order.save(update_fields=['status'])
+    return order
