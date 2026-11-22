@@ -1,7 +1,33 @@
+from decimal import Decimal, InvalidOperation
+
 from rest_framework import filters, viewsets
+from rest_framework.exceptions import ValidationError
+
 from .models import Category, Product
 from .permissions import IsAdminOrReadOnly
 from .serializers import CategorySerializer, ProductSerializer
+
+def parse_int_param(params, name):
+    value = params.get(name)
+    if value in (None, ''):
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        raise ValidationError({name: 'Must be a whole number.'})
+
+def parse_decimal_param(params, name):
+    value = params.get(name)
+    if value in (None, ''):
+        return None
+    try:
+        number = Decimal(value)
+    except InvalidOperation:
+        raise ValidationError({name: 'Must be a number.'})
+    if not number.is_finite():
+        raise ValidationError({name: 'Must be a number.'})
+    return number
+
 
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all().order_by('name')
@@ -21,18 +47,17 @@ class ProductViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_active=True)
         
         params = self.request.query_params
-        category = params.get('category')
-        min_price = params.get('min_price')
-        max_price = params.get('max_price')
-        in_stock = params.get('in_stock')
+        category = parse_int_param(params, 'category')
+        min_price = parse_int_param(params, 'min_price')
+        max_price = parse_int_param(params, 'max_price')
 
-        if category:
+        if category is not None:
             queryset = queryset.filter(category_id=category)
-        if min_price:
-            queryset = queryset.filter(price_gte=min_price)
-        if max_price:
-            queryset = queryset.filter(price_lte=max_price)
-        if in_stock == 'true':
+        if min_price is not None:
+            queryset = queryset.filter(price__gte=min_price)
+        if max_price is not None:
+            queryset = queryset.filter(price__lte=max_price)
+        if params.get('in_stock') == 'true':
             queryset = queryset.filter(stock_gt=0)
         
         return queryset
